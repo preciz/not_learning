@@ -90,7 +90,7 @@ Axon.Display.as_table(model, Nx.template({1, 30000}, :f32)) |> IO.puts()
 model_params =
   model
   |> Axon.Loop.trainer(loss, optimizer)
-  |> Axon.Loop.run(Stream.zip(train_data, train_labels), %{}, epochs: 20, compiler: EXLA)
+  |> Axon.Loop.run(Stream.zip(train_data, train_labels), %{}, epochs: epochs, compiler: EXLA)
 ```
 
 ```elixir
