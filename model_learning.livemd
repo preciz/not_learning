@@ -1,0 +1,105 @@
+# Model is learning with axon 0.4.1
+
+```elixir
+Mix.install([
+  {:axon, "~> 0.4.1"},
+  {:nx, "~> 0.4.2"},
+  {:exla, "~> 0.4.2"},
+  {:httpoison, "~> 2.2"},
+  {:table_rex, "~> 3.1"}
+])
+```
+
+## Section
+
+```elixir
+Nx.Defn.default_options(compiler: EXLA)
+Nx.global_default_backend(EXLA.Backend)
+```
+
+```elixir
+chunk_length = 30_000
+epochs = 10
+batch_size = 20
+```
+
+```elixir
+{:ok, %{body: data_bin_gz}} =
+  HTTPoison.get("https://raw.githubusercontent.com/preciz/not_learning/master/data.bin.gz")
+
+data_bin = :zlib.gunzip(data_bin_gz)
+
+{:ok, %{body: labels_bin_gz}} =
+  HTTPoison.get("https://raw.githubusercontent.com/preciz/not_learning/master/data_labels.bin.gz")
+
+labels_bin = :zlib.gunzip(labels_bin_gz)
+```
+
+```elixir
+count = div(byte_size(data_bin), chunk_length) |> IO.inspect(label: "count")
+
+batch_count = div(round(count), batch_size)
+train_batches_count = floor(batch_count * 0.8)
+```
+
+```elixir
+{train_data, test_data} =
+  Nx.from_binary(data_bin, :u8)
+  |> Nx.divide(255.0)
+  |> Nx.reshape({count, chunk_length})
+  |> Nx.to_batched(batch_size, leftover: :discard)
+  |> Enum.split(train_batches_count)
+```
+
+```elixir
+{train_labels, test_labels} =
+  Nx.from_binary(labels_bin, :u8)
+  |> Nx.new_axis(-1)
+  |> Nx.equal(Nx.tensor([0, 1]))
+  |> Nx.to_batched(batch_size, leftover: :discard)
+  |> Enum.split(train_batches_count)
+```
+
+```elixir
+loss =
+  &Axon.Losses.binary_cross_entropy(
+    &1,
+    &2,
+    reduction: :mean
+  )
+```
+
+```elixir
+optimizer = Axon.Optimizers.adamw(1.0e-3)
+```
+
+```elixir
+model =
+  Axon.input("input")
+  |> Axon.dense(128, activation: :relu, kernel_initializer: :he_normal)
+  |> Axon.dense(128, activation: :relu, kernel_initializer: :he_normal)
+  |> Axon.dropout(rate: 0.2)
+  |> Axon.dense(2, activation: :sigmoid)
+```
+
+```elixir
+# Axon.Display.as_table(model, Nx.template({1, 30000}, :f32)) |> IO.puts()
+```
+
+```elixir
+model_params =
+  model
+  |> Axon.Loop.trainer(loss, optimizer)
+  |> Axon.Loop.run(Stream.zip(train_data, train_labels), %{}, epochs: epochs, compiler: EXLA)
+```
+
+```elixir
+accuracy =
+  model
+  |> Axon.Loop.evaluator()
+  |> Axon.Loop.metric(:accuracy, "Accuracy")
+  |> Axon.Loop.run(Stream.zip(test_data, test_labels), model_params, compiler: EXLA)
+  |> Map.get(0)
+  |> Map.get("Accuracy")
+  |> Nx.to_number()
+```
